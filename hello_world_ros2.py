@@ -54,30 +54,89 @@
 import rclpy
 from rclpy.node import Node
 from std_msgs.msg import String
+import threading
+import isaacsim.ros2.bridge
+print(isaacsim.ros2.bridge.__file__)
 
-# Define a HelloWorldPublisher class that inherits from Node
 class HelloWorldPublisher(Node):
     def __init__(self):
-        super().__init__('hello_world_publisher')  # Initialize the node with the name 'hello_world_publisher'
-        self.publisher_ = self.create_publisher(String, 'hello_world_topic', 10)  # Create a publisher for the 'hello_world_topic' with a queue size of 10
-        timer_period = 1.0  # seconds
-        self.timer = self.create_timer(timer_period, self.timer_callback)  # Create a timer that calls the timer_callback function every second
+        super().__init__('hello_world_publisher')
+        self.publisher_ = self.create_publisher(String, 'hello_world_topic', 10)
+        self.timer = self.create_timer(1.0, self.timer_callback)
+        self.count = 0  # Track number of messages published
+        self.max_count = 10  # Stop after 10 messages
 
     def timer_callback(self):
-        msg = String()  # Create a new String message
-        msg.data = 'Hello World'  # Set the data of the message to 'Hello World'
-        self.publisher_.publish(msg)  # Publish the message
-        self.get_logger().info('Publishing: "%s"' % msg.data)  # Log the message data
+        """Publishes messages and stops after 10 messages."""
+        if self.count < self.max_count:
+            msg = String()
+            msg.data = f'Hello World {self.count + 1}'
+            self.publisher_.publish(msg)
+            self.get_logger().info(f'Publishing: "{msg.data}"')
+            self.count += 1
+        else:
+            self.get_logger().info("Reached max count, stopping...")
+            stop_ros_node()  # Gracefully stop execution
 
-def main(args=None):
-    rclpy.init(args=args)  # Initialize the ROS 2 Python client library
-    node = HelloWorldPublisher()  # Create an instance of the HelloWorldPublisher node
+
+# Global stop event and ROS thread
+stop_event = threading.Event()
+ros_thread = None
+
+
+def run_ros2_node():
+    """Runs the ROS2 node in a background thread."""
+    global stop_event
+
+    # Initialize ROS only if it's not already initialized
+    if not rclpy.utilities.ok():
+        print("Initializing ROS2...")
+        rclpy.init()
+    else:
+        print("ROS2 is already initialized, skipping duplicate initialization.")
+
+    node = HelloWorldPublisher()
+    executor = rclpy.executors.MultiThreadedExecutor()
+    executor.add_node(node)
+
     try:
-        rclpy.spin(node)  # Keep the node running, allowing it to process callbacks
+        while rclpy.ok() and not stop_event.is_set():
+            executor.spin_once(timeout_sec=0.1)
     except KeyboardInterrupt:
-        pass  # Handle the KeyboardInterrupt exception to allow for graceful shutdown
-    node.destroy_node()  # Destroy the node explicitly
-    rclpy.shutdown()  # Shutdown the ROS 2 Python client library
+        pass
+    finally:
+        print("Shutting down ROS2...")
+        node.destroy_node()
+        rclpy.shutdown()
+        print("ROS2 shut down successfully.")
 
-if __name__ == '__main__':
-    main()  # Run the main function if the script is executed directly
+
+def start_ros_node():
+    """Starts the ROS2 node in a new thread."""
+    global ros_thread
+    if ros_thread is None or not ros_thread.is_alive():
+        stop_event.clear()
+        ros_thread = threading.Thread(target=run_ros2_node, daemon=True)
+        ros_thread.start()
+        print("ROS2 node started.")
+
+
+def stop_ros_node():
+    """Stops the ROS2 node."""
+    global stop_event, ros_thread
+
+    if not stop_event.is_set():
+        print("Stopping ROS2 node...")
+        stop_event.set()
+
+    if ros_thread and ros_thread.is_alive():
+        ros_thread.join()
+        print("ROS2 node stopped.")
+
+    # Ensure rclpy is fully shutdown
+    if rclpy.ok():
+        rclpy.shutdown()
+
+
+# Start the ROS2 node
+start_ros_node()
