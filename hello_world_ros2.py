@@ -1,3 +1,25 @@
+# hello_world_ros2.py
+#
+# This script demonstrates a simple ROS 2 publisher that publishes a "Hello World" message to a topic.
+#
+# Follow the steps below to execute this script in your WSL (Windows Subsystem for Linux) environment:
+#
+# 1. Open your WSL terminal (Linux environment).
+# 2. Navigate to the directory where the Python script is located. 
+#    For example, if the script is located on your D: drive in Windows, use the following command:
+#    cd /mnt/d/ccsu_s2r_project
+#
+# 3. Ensure that you have ROS 2 installed in your WSL environment. If you haven't installed ROS 2 yet,
+#    follow the instructions for installing ROS 2 Humble: https://docs.ros.org/en/humble/Installation/Ubuntu-Install-Debians.html
+#
+# 4. Source the ROS 2 setup files:
+#    source /opt/ros/humble/setup.bash
+#
+# 5. Run the script using Python 3 in your WSL terminal:
+#    python3 hello_world_ros2.py
+#
+# If everything is set up correctly, the script will start publishing a "Hello World" message every second.
+
 import rclpy
 from rclpy.node import Node
 from std_msgs.msg import String
