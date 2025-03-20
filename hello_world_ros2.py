@@ -2,8 +2,11 @@
 #
 # This script demonstrates a simple ROS 2 publisher that publishes a "Hello World" message to a topic.
 #
-# Follow the steps below to execute this script in your WSL (Windows Subsystem for Linux) environment:
+# Follow the steps below to execute this script in your WSL (Windows Subsystem for Linux) or VMware Linux environment:
 #
+# ====================
+# WSL (Windows Subsystem for Linux) Execution:
+# ====================
 # 1. Open your WSL terminal (Linux environment).
 # 2. Navigate to the directory where the Python script is located. 
 #    For example, if the script is located on your D: drive in Windows, use the following command:
@@ -18,7 +21,33 @@
 # 5. Run the script using Python 3 in your WSL terminal:
 #    python3 hello_world_ros2.py
 #
-# If everything is set up correctly, the script will start publishing a "Hello World" message every second.
+# =========================
+# VMware (Virtual Machine) Execution:
+# =========================
+# 1. Start your VMware virtual machine (VM) with a Linux distribution (e.g., Ubuntu).
+# 2. Open a terminal inside the VM.
+#
+# 3. If the script is on your Windows host, ensure that you have shared the folder between the host and VM.
+#    Then, mount the shared folder in your VM (e.g., /mnt/hgfs).
+#    Example command to mount shared folder:
+#    sudo mount -t vmhgfs .host:/Shared /mnt/hgfs
+#    cd /mnt/hgfs/ccsu_s2r_project  # Navigate to the directory where the script is stored.
+#
+# 4. Ensure that you have ROS 2 installed on your VM. If you haven't installed ROS 2 yet, follow the
+#    instructions for installing ROS 2 Humble in Ubuntu: https://docs.ros.org/en/humble/Installation/Ubuntu-Install-Debians.html
+#
+# 5. Source the ROS 2 setup files in your terminal:
+#    source /opt/ros/humble/setup.bash
+#
+# 6. Run the script using Python 3 in your VM terminal:
+#    python3 hello_world_ros2.py
+#
+# ====================
+# Expected Output:
+# ====================
+# If everything is set up correctly, the script will start publishing a "Hello World" message to the topic
+# 'hello_world_topic' every second. You should see the message being printed in the terminal:
+#    Publishing: "Hello World"
 
 import rclpy
 from rclpy.node import Node
