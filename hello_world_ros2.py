@@ -49,6 +49,8 @@
 # 'hello_world_topic' every second. You should see the message being printed in the terminal:
 #    Publishing: "Hello World"
 
+# E.M.E.R.G.E – Emulation of Mobility and Expressiveness in Robotic Quadrupeds for Global Environments 
+
 import rclpy
 from rclpy.node import Node
 from std_msgs.msg import String
