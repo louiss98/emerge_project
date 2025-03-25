@@ -50,15 +50,18 @@ else:
 
     class JointStatePublisher(Node):
         """ROS2 node that publishes joint states."""
-
+        count = 0
         def __init__(self):
             super().__init__('joint_state_publisher')
             self.publisher_ = self.create_publisher(JointState, 'unitree_go2/joint_states', 10)
             self.timer = self.create_timer(1.0, self.timer_callback)  # Publish every second
             self.start_time = time.time()
-            self.duration = 5  # Run for 5 seconds
+            self.duration = 15  # Run for 5 seconds
 
         def timer_callback(self):
+            self.count += 1
+            print(f"timer count: {self.count}")
+            self.count += 1
             """Publishes joint states and stops after the duration."""
             if time.time() - self.start_time > self.duration:
                 self.get_logger().info("Finished publishing joint states.")
@@ -101,3 +104,12 @@ else:
     ros_thread.start()
     
     print("ROS2 node started.")
+
+    # Wait for the ROS2 node to complete its duration
+    ros_thread.join()
+
+    print("Simulation stopped.")
+
+    # Remove the robot
+    omni.kit.commands.execute("DeletePrims", paths=[robot_prim_path])
+    print("Robot removed from the scene.")
