@@ -1,15 +1,18 @@
-import time
 import threading
+import asyncio
 import omni.usd
-from pxr import Sdf
-import omni.isaac.dynamic_control as dc
 import omni.kit.commands
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import JointState
-from isaacsim.core.api import World
+import omni.kit.app
+import time
+from pxr import Sdf
 
-# Get the environment context
+# Use the new SingleArticulation API instead of the deprecated Articulation
+from isaacsim.core.prims import SingleArticulation as Articulation
+
+# Get the environment context and stage
 usd_context = omni.usd.get_context()
 stage = usd_context.get_stage()
 timeline = omni.timeline.get_timeline_interface()
@@ -17,11 +20,25 @@ stop_event = threading.Event()
 
 # Define the prim path where the robot will be spawned and the asset path
 robot_prim_path = "/World/UnitreeGo2"
-robot_asset_path = "https://omniverse-content-production.s3-us-west-2.amazonaws.com/Assets/Isaac/4.5/Isaac/Robots/Unitree/Go2/go2.usd"
+robot_asset_path = ("https://omniverse-content-production.s3-us-west-2.amazonaws.com/Assets/Isaac/4.5/"
+                    "Isaac/Robots/Unitree/Go2/go2.usd")
 
-# Check if the robot is already spawned
+# Ensure the physics scene exists
+physics_scene_path = "/World/PhysicsScene"
+if not stage.GetPrimAtPath(physics_scene_path):
+    print("Creating PhysicsScene prim at", physics_scene_path)
+    omni.kit.commands.execute(
+        "CreatePrim",
+        prim_type="PhysicsScene",
+        prim_path=physics_scene_path
+    )
+else:
+    print("PhysicsScene already exists at", physics_scene_path)
+
+time.sleep(1)
+
+# Spawn the robot if not already present
 if not stage.GetPrimAtPath(robot_prim_path):
-    # Spawn the robot by creating a reference to its USD file
     print("Spawning Unitree GO2 robot at prim path:", robot_prim_path)
     omni.kit.commands.execute(
         "CreateReference",
@@ -29,88 +46,111 @@ if not stage.GetPrimAtPath(robot_prim_path):
         path_to=robot_prim_path,
         asset_path=robot_asset_path
     )
+    omni.kit.commands.execute(
+        "ChangeProperty",
+        prop_path=Sdf.Path(f"{robot_prim_path}.physics:enableArticulation"),
+        value=True,
+        prev=None
+    )
+    omni.kit.commands.execute(
+        "AddArticulationRoot",
+        path=robot_prim_path
+    )
 else:
     print("Robot is already spawned at prim path:", robot_prim_path)
 
-# Acquire the Dynamic Control (DC) interface
-# dc_interface = dc._dynamic_control.acquire_dynamic_control_interface()
-# Retrieve the articulation ID of the spawned robot
-# articulation = dc_interface.get_articulation(robot_prim_path)
+# Start the simulation timeline
+timeline.play()
 
-print("test")
-if articulation is None:
-    print("Error: Unable to get the robot's articulation. Check the prim path and asset loading.")
-else:
-    print("Robot spawned successfully. Articulation ID:", articulation)
-    
-    # omni.timeline.get_timeline_interface().play() # We're going to assume the timeline is already playingt to start
-    
-    # Get the number of degrees of freedom (DOFs)
-    num_dofs = dc_interface.get_articulation_dof_count(articulation)
-    print(f"Robot has {num_dofs} joints.")
+# Create a SingleArticulation instance for the robot using the new API.
+articulation = Articulation(robot_prim_path)
+print("Articulation instance created:", articulation)
 
-    class JointStatePublisher(Node):
-        """ROS2 node that publishes joint states."""
-        def __init__(self):
-            super().__init__('joint_state_publisher')
-            self.publisher_ = self.create_publisher(JointState, 'unitree_go2/joint_states', 10)
-            self.timer_callback()
-            self.start_time = time.time()
-            self.duration = 15  # Run for 15 seconds
+# Define the joints you expect (adjust as necessary)
+joints = [
+    "FL_hip_joint",
+    "FR_hip_joint",
+    "RL_hip_joint",
+    "RR_hip_joint",
+    "FL_thigh_joint",
+    "FL_calf_joint",
+    "FR_thigh_joint",
+    "FR_calf_joint",
+    "RL_thigh_joint",
+    "RL_calf_joint",
+    "RR_thigh_joint",
+    "RR_calf_joint"
+]
+num_joints = len(joints)
+print(f"Robot has {num_joints} joints.")
 
-        def timer_callback(self):
-            # Stop publishing after the set duration
-            if time.time() - self.start_time > self.duration:
-                self.get_logger().info("Finished publishing joint states.")
-                stop_event.set()  # Signal the thread to stop
-                return
+# Define a ROS2 node that publishes joint states using the new Articulation API.
+class JointStatePublisher(Node):
+    """ROS2 node that publishes joint states."""
+    def __init__(self, articulation):
+        super().__init__('joint_state_publisher')
+        self.publisher_ = self.create_publisher(JointState, 'unitree_go2/joint_states', 10)
+        self.articulation = articulation
+        self.start_time = time.time()
+        self.duration = 15  # seconds
+        self.timer_callback()  # Start publishing loop
 
-            joint_state_msg = JointState()
-            joint_state_msg.header.stamp = self.get_clock().now().to_msg()
-            joint_state_msg.name = [f"joint_{i}" for i in range(num_dofs)]
-            joint_state_msg.position = [
-                dc_interface.get_articulation_dof_position(articulation, i) for i in range(num_dofs)
-            ]
-            self.publisher_.publish(joint_state_msg)
-            self.get_logger().info(f"Published joint states: {joint_state_msg.position}")
+    def timer_callback(self):
+        if time.time() - self.start_time > self.duration:
+            self.get_logger().info("Finished publishing joint states.")
+            stop_event.set()
+            return
 
-    def run_ros2_node():
-        """Runs the ROS2 joint state publisher in a background thread."""
-        if not rclpy.utilities.ok():
-            print("Initializing ROS2...")
-            rclpy.init()
-        node = JointStatePublisher()
-        executor = rclpy.executors.MultiThreadedExecutor()
-        executor.add_node(node)
-        try:
-            while rclpy.ok() and not stop_event.is_set():
-                executor.spin_once(timeout_sec=0.1)
-                time.sleep(0.01)
-        except KeyboardInterrupt:
-            pass
-        finally:
-            print("Shutting down ROS2...")
-            node.destroy_node()
-            rclpy.shutdown()
-            print("ROS2 shut down successfully.")
+        # For testing purposes, explicitly set joint values:
+        explicit_positions = [0.1 * i for i in range(num_joints)]
+        # Using the new Articulation API to set joint positions
+        self.articulation.set_joint_positions(explicit_positions)
 
-    # Start the ROS2 publishing thread (daemonized so it doesn't block UI shutdown)
-    ros_thread = threading.Thread(target=run_ros2_node, daemon=True)
-    ros_thread.start()
-    print("ROS2 node started.")
+        # Retrieve the joint positions from the robot articulation
+        positions = self.articulation.get_joint_positions()
+        # Ensure each value is a plain Python float
+        positions = [float(p) for p in positions]
 
-    # Instead of a blocking join, poll the thread in a loop:
-    while ros_thread.is_alive():
-        ros_thread.join(timeout=0.1)
-        time.sleep(0.01)
-    
-    print("ROS2 node finished, simulation can now proceed with cleanup.")
-    
-    # Signal cleanup actions
-    stop_event.set()
-    # Optionally, pause the simulation timeline here:
-    omni.timeline.get_timeline_interface().pause()
-    
-    # Remove the robot (if desired)
-    # omni.kit.commands.execute("DeletePrims", paths=[robot_prim_path])
-    # print("Robot removed from the scene.")
+        joint_state_msg = JointState()
+        joint_state_msg.header.stamp = self.get_clock().now().to_msg()
+        joint_state_msg.name = joints
+        joint_state_msg.position = positions
+
+        self.publisher_.publish(joint_state_msg)
+        self.get_logger().info(f"Published joint states: {positions}")
+        print("Joint state data:", positions)
+
+        # Schedule the next call to timer_callback (non-blocking)
+        threading.Timer(0.5, self.timer_callback).start()
+
+def ros2_spin(node):
+    executor = rclpy.executors.MultiThreadedExecutor()
+    executor.add_node(node)
+    try:
+        print("Starting ROS2 spinning...")
+        executor.spin()
+    except KeyboardInterrupt:
+        print("Keyboard interrupt, shutting down ROS2...")
+    finally:
+        executor.shutdown()
+        node.destroy_node()
+        rclpy.shutdown()
+        print("ROS2 shut down successfully.")
+
+def run_ros2_node():
+    if not rclpy.utilities.ok():
+        print("Initializing ROS2...")
+        rclpy.init()
+    node = JointStatePublisher(articulation)
+    ros2_thread = threading.Thread(target=ros2_spin, args=(node,), daemon=True)
+    ros2_thread.start()
+    print("ROS2 node started in background thread.")
+
+# Start the ROS2 node in a background thread
+ros_thread = threading.Thread(target=run_ros2_node, daemon=True)
+ros_thread.start()
+print("ROS2 node started.")
+
+# Keep the simulation running
+while True:
+    time.sleep(0.1)
