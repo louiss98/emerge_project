@@ -92,13 +92,13 @@ class JointStatePublisher(Node):
         self.publisher_ = self.create_publisher(JointState, 'unitree_go2/joint_states', 10)
         self.articulation = articulation
         self.start_time = time.time()
-        self.duration = 15  # seconds
+        self.duration = 10  # seconds
         self.timer_callback()  # Start publishing loop
 
     def timer_callback(self):
         if time.time() - self.start_time > self.duration:
             self.get_logger().info("Finished publishing joint states.")
-            stop_event.set()
+            stop_event.set()  # Signal the main loop to stop
             return
 
         # For testing purposes, explicitly set joint values:
@@ -108,6 +108,11 @@ class JointStatePublisher(Node):
 
         # Retrieve the joint positions from the robot articulation
         positions = self.articulation.get_joint_positions()
+
+        if positions is None:
+            self.get_logger().warn("Articulation positions are None. Check initialization.")
+            return  # Exit the callback
+
         # Ensure each value is a plain Python float
         positions = [float(p) for p in positions]
 
@@ -152,5 +157,14 @@ ros_thread.start()
 print("ROS2 node started.")
 
 # Keep the simulation running
-while True:
-    time.sleep(0.1)
+try:
+    while not stop_event.is_set():
+        time.sleep(0.1)
+except KeyboardInterrupt:
+    pass
+finally:
+    print("Shutting down ROS2...")
+    rclpy.shutdown()
+    print("ROS2 shut down successfully.")
+    timeline.stop()
+    print("Timeline stopped.")
