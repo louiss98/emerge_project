@@ -59,7 +59,7 @@ if not stage.GetPrimAtPath(robot_prim_path):
 else:
     print("Robot is already spawned at prim path:", robot_prim_path)
 
-# Start the simulation timeline
+# Start the simulation timeline. NOT WAITING FOR A FRAME TO PASS.
 timeline.play()
 
 # Create a SingleArticulation instance for the robot using the new API.
@@ -93,29 +93,25 @@ class JointStatePublisher(Node):
         self.articulation = articulation
         self.start_time = time.time()
         self.duration = 10  # seconds
-        self.timer_callback()  # Start publishing loop
+        self.timer = self.create_timer(1, self.timer_callback)
 
     def timer_callback(self):
         if time.time() - self.start_time > self.duration:
             self.get_logger().info("Finished publishing joint states.")
             stop_event.set()  # Signal the main loop to stop
+            self.destroy_timer(self.timer)  # Cancel further timer callbacks
             return
 
-        # For testing purposes, explicitly set joint values:
-        explicit_positions = [0.1 * i for i in range(num_joints)]
-        # Using the new Articulation API to set joint positions
-        self.articulation.set_joint_positions(explicit_positions)
-
-        # Retrieve the joint positions from the robot articulation
+        # SETS EXPLICIT JOINT POSITIONS
+        # explicit_positions = [0.1 * i for i in range(num_joints)]
+        # self.articulation.set_joint_positions(explicit_positions)
         positions = self.articulation.get_joint_positions()
 
         if positions is None:
             self.get_logger().warn("Articulation positions are None. Check initialization.")
-            return  # Exit the callback
+            return
 
-        # Ensure each value is a plain Python float
         positions = [float(p) for p in positions]
-
         joint_state_msg = JointState()
         joint_state_msg.header.stamp = self.get_clock().now().to_msg()
         joint_state_msg.name = joints
@@ -125,46 +121,40 @@ class JointStatePublisher(Node):
         self.get_logger().info(f"Published joint states: {positions}")
         print("Joint state data:", positions)
 
-        # Schedule the next call to timer_callback (non-blocking)
-        threading.Timer(0.5, self.timer_callback).start()
-
-def ros2_spin(node):
-    executor = rclpy.executors.MultiThreadedExecutor()
-    executor.add_node(node)
+def main():
+    # Initialize ROS2 and create publisher node
     try:
-        print("Starting ROS2 spinning...")
-        executor.spin()
+        # Initialize ROS2 if not already initialized
+        if not rclpy.utilities.ok():
+            print("Initializing ROS2.")
+            rclpy.init()
+
+        # Create ROS2 node for publishing joint states
+        joint_state_publisher_node = JointStatePublisher(articulation)
+
+        # Create a multi-threaded executor to run the node
+        executor = rclpy.executors.MultiThreadedExecutor()
+        executor.add_node(joint_state_publisher_node)
+        # Run executor in its own thread
+        spin_thread = threading.Thread(target=executor.spin, daemon=True)
+        spin_thread.start()
+
+        start_time = time.time()
+        duration = 10  # seconds
+        while not stop_event.is_set(): # Prevents thread from exiting
+            if time.time() - start_time > duration:
+                stop_event.set()  # Signal the main loop to stop
+            time.sleep(0.1)
     except KeyboardInterrupt:
-        print("Keyboard interrupt, shutting down ROS2...")
+        print("Keyboard interrupt, shutting down ROS2.")
     finally:
-        executor.shutdown()
-        node.destroy_node()
+        print("Shutting down ROS2.")
         rclpy.shutdown()
         print("ROS2 shut down successfully.")
+        timeline.stop()
+        print("Timeline stopped.")
 
-def run_ros2_node():
-    if not rclpy.utilities.ok():
-        print("Initializing ROS2...")
-        rclpy.init()
-    node = JointStatePublisher(articulation)
-    ros2_thread = threading.Thread(target=ros2_spin, args=(node,), daemon=True)
-    ros2_thread.start()
-    print("ROS2 node started in background thread.")
 
-# Start the ROS2 node in a background thread
-ros_thread = threading.Thread(target=run_ros2_node, daemon=True)
-ros_thread.start()
-print("ROS2 node started.")
-
-# Keep the simulation running
-try:
-    while not stop_event.is_set():
-        time.sleep(0.1)
-except KeyboardInterrupt:
-    pass
-finally:
-    print("Shutting down ROS2...")
-    rclpy.shutdown()
-    print("ROS2 shut down successfully.")
-    timeline.stop()
-    print("Timeline stopped.")
+main_thread = threading.Thread(target=main, daemon=True)
+main_thread.start()
+print("Main function is running in a separate thread.")
