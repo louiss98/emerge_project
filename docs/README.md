@@ -1,8 +1,7 @@
-# CCSU GO2 Robotic Dog Project
+# E.M.E.R.G.E – Emulation of Mobility and Expressiveness in Robotic Quadrupeds for Global Environments 
 
 ## Table of Contents
 - [About](#about)
-- [Certification](#-certification)
 - [How to Build](#-how-to-build)
 - [Documentation](#-documentation)
 - [Feedback and Contributions](#-feedback-and-contributions)
@@ -11,7 +10,9 @@
 
 ## About
 
-The GO2 Robotic Dog Project is a Unitree GO2 EDU robot engineered to model puppy-like behaviors through autonomous navigation of its environment.
+The EMERGE Project is a simulation-to-reality (sim-to-real) application designed for the Unitree GO2 robot. This project focuses on modeling and replicating puppy-like behaviors in simulation and then deploying them onto the physical robot.
+
+This project was a multi-disciplinary effort involving many contributors across various disciplines.
 
 ## Installation
 
