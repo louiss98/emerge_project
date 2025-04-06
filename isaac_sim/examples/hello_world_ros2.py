@@ -54,6 +54,7 @@
 import rclpy
 from rclpy.node import Node
 from std_msgs.msg import String
+from isaac import Application #Needs isaac package to be installed correctly
 import threading
 import isaacsim.ros2.bridge
 print(isaacsim.ros2.bridge.__file__)
@@ -77,6 +78,29 @@ class HelloWorldPublisher(Node):
         else:
             self.get_logger().info("Reached max count, stopping...")
             stop_ros_node()  # Gracefully stop execution
+
+class AudioNode(Node): # Publisher node for publishing audio data
+    def __init__(self):
+        super().__init__('audio_node') #Can be used for audio playback or other audio-related tasks in the future
+        self.publisher_ = self.create_publisher(String, 'audio_topic', 10) # Placeholder for audio topic, if needed
+        self.timer = self.create_timer(1.0, self.timer_callback) # Timer to publish audio-related messages if needed
+
+    def timer_callback(self):
+        """
+        Placeholder for audio-related messages. Currently does nothing but can be extended for audio functionality.
+        """
+        # Example message, can be replaced with actual audio-related logic
+        msg = String()
+        msg.data = 'Audio Node Active'
+        self.publisher_.publish(msg)
+        self.get_logger().info(f'Publishing: "{msg.data}"')
+def audiomain(args=None):
+    rclpy.init(args=args)
+    audio_node = AudioNode()
+    rclpy.spin(audio_node)
+
+    audio_node.destroy_node()
+    rclpy.shutdown()
 
 
 # Global stop event and ROS thread
