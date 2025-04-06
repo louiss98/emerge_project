@@ -10,12 +10,16 @@ from pxr import Sdf, Gf, UsdGeom
 from isaacsim.core.prims import SingleArticulation as Articulation
 from isaacsim.core.utils.types import ArticulationAction
 import numpy as np
-from omni.isaac.core import World
+from isaacsim.core.api.world import World
 from omni.isaac.core.utils.stage import get_current_stage
 import math
-from omni.isaac.core import SimulationContext
+from isaacsim.core.api import SimulationContext
 import omni.kit.app
 from omni.kit.async_engine import run_coroutine
+import queue
+import numpy as np
+
+
 
 # Initialize ROS2 only once
 
@@ -144,7 +148,7 @@ robot_prim_path = "/World/UnitreeGo2"
 robot_asset_path = (
     "https://omniverse-content-production.s3-us-west-2.amazonaws.com/Assets/Isaac/4.5/"
     "Isaac/Robots/Unitree/Go2/go2.usd")
-physics_scene_path = "/World/PhysicsScene"
+physics_scene_path = "/World/PhysicsScene" 
 robot_prim_path = "/World/UnitreeGo2"
 robot_imu_prim_path = robot_prim_path + "/imu"
 
@@ -171,7 +175,7 @@ joints = [
 frequency = 0.5  # oscillations per second
 amplitude = 0.5  # maximum joint deviation
 # Create or get the world instance. The World object manages physics callbacks.
-world = World()
+
 
 
 def setup_env():
@@ -233,6 +237,25 @@ def initialize_articulation_callback(event):
             timeline.play()
         initialization_done = True
         timeline_sub.unsubscribe()
+    
+    
+    # Define angles (in radians)
+    hip_angle      = 0 * np.pi / 180         # approx 0.0873 rad
+    thigh_angle    = 10 * np.pi / 180       # approx -0.87266 rad
+    calf_angle     = 20 * np.pi / 180       # approx 1.74533 rad
+
+    # Assuming the joint order is:
+    # [FL_hip, FR_hip, RL_hip, RR_hip,
+    #  FL_thigh, FL_calf, FR_thigh, FR_calf,
+    #  RL_thigh, RL_calf, RR_thigh, RR_calf]
+    action = ArticulationAction(
+        joint_positions = np.array([
+            hip_angle,  hip_angle,  hip_angle,  hip_angle,
+            thigh_angle, thigh_angle, thigh_angle, thigh_angle,
+            calf_angle, calf_angle, calf_angle, calf_angle,
+        ])
+    )
+    articulation.apply_action(action)
     timeline.play()
 
 
@@ -265,27 +288,114 @@ def joint_wave_callback(step_size):
         print("Error applying joint action:", e)
 
 
-def combined_callback(imu_publisher, joint_state_publisher):
-    """Combines IMU publishing, joint state publishing, and joint wave motion."""
-    try:
-        imu_publisher.publish_imu_data()
-    except Exception as e:
-        print(f"Error publishing IMU data: {e}")
 
-    try:
-        joint_state_publisher.publish_joint_states()
-    except Exception as e:
-        print(f"Error publishing joint states: {e}")
+# def combined_callback(step_size):
+#     print("physics callback -> step_size:", step_size)
+
+#     try:
+#         imu_publisher.publish_imu_data()
+#     except Exception as e:
+#         print(f"Error publishing IMU data: {e}")
+
+#     try:
+#         joint_state_publisher.publish_joint_states()
+#     except Exception as e:
+#         print(f"Error publishing joint states: {e}")
+
+
+# from concurrent.futures import ThreadPoolExecutor
+
+# # Create a thread pool with a fixed number of worker threads.
+# publish_executor = ThreadPoolExecutor(max_workers=4)
+# publish_counter = 0
+# callback_registered = False
+
+# def combined_callback(step_size):
+#     global publish_counter
+#     publish_counter += 1
+
+#     # Only submit tasks every 10th callback (adjust as needed)
+#     if publish_counter % 20 == 0:
+#         print("physics callback -> step_size:", step_size)
+#         publish_executor.submit(imu_publisher.publish_imu_data)
+#         publish_executor.submit(joint_state_publisher.publish_joint_states)
+
+
+
+publish_queue = queue.Queue()
+publish_counter = 0
+n_publish_frequency = 30
+
+def combined_callback(step_size):
+    global publish_counter
+    publish_counter += 1
+
+    # Only enqueue data for publishing every 'n_publish_frequency' callbacks.
+    if publish_counter % n_publish_frequency == 0:
+        data_for_publish = {
+            "step_size": step_size,
+            # You can include other data as needed.
+        }
+        publish_queue.put(data_for_publish)
+        print(f"Collected data from physics step -> step_size: {step_size} (every {n_publish_frequency} calls)")
+
+
+def publish_worker():
+    while not stop_event.is_set():
+        try:
+            # Wait until physics step data is available with a timeout
+            data = publish_queue.get(timeout=0.1)
+        except queue.Empty:
+            continue
+
+        try:
+            # Publish IMU data
+            imu_publisher.publish_imu_data()
+        except Exception as e:
+            print(f"Error publishing IMU data: {e}")
+
+        try:
+            # Publish joint states
+            joint_state_publisher.publish_joint_states()
+        except Exception as e:
+            print(f"Error publishing joint states: {e}")
+
+# Start the publishing worker in a separate thread
+publisher_thread = threading.Thread(target=publish_worker, daemon=True)
+publisher_thread.start()
 
 
 setup_env()
 
+# timeline.play()
+
+SimulationContext.clear_instance()
+simulation_context = SimulationContext()  # Example: 60 Hz
+# world = World()
+# world.initialize_physics()
+
+
+simulation_context = SimulationContext()
+async def task():
+    await simulation_context.initialize_simulation_context_async()
+    print("Simulation context initialized.")
+    # simulation_context.add_physics_callback("callback_physics", combined_callback)
+    # simulation_context.set_physics_dt(1.0/10.0, 1)
+    # simulation_context.get_physics_dt()
+
+run_coroutine(task())
+
+
+
 
 articulation = Articulation(robot_prim_path)
+
 
 timeline_sub = timeline.get_timeline_event_stream().create_subscription_to_pop(
     initialize_articulation_callback, 1
 )
+
+
 
 if rclpy.utilities.ok():
     print("Shutting down previous ROS2 context...")
@@ -302,7 +412,6 @@ executor.add_node(imu_publisher)
 executor.add_node(joint_state_publisher)
 
 
-simulation_context = SimulationContext()
 
 
 # async def run_simulation():
@@ -318,6 +427,7 @@ simulation_context = SimulationContext()
 def main():
     # Initialize ROS2 and create publisher node
     try:
+
         # Initialize ROS2 if not already initialized
         if not rclpy.utilities.ok():
             print("Initializing ROS2.")
@@ -332,7 +442,7 @@ def main():
         spin_thread.start()
 
         # Initialize physics *before* starting the timeline
-        world.initialize_physics()
+        # world.initialize_physics()
         timeline.play()
 
         start_time = time.time()
@@ -342,9 +452,9 @@ def main():
                 stop_event.set()  # Signal the main loop to stop
 
             # Call the combined callback function
-            combined_callback(imu_publisher, joint_state_publisher)
+            # combined_callback()
 
-            time.sleep(0.01)  # Adjust sleep time as needed
+            time.sleep(2)  # Adjust sleep time as needed
 
     except KeyboardInterrupt:
         print("Keyboard interrupt, shutting down ROS2.")
@@ -354,8 +464,8 @@ def main():
         print("ROS2 shut down successfully.")
         # timeline.stop()
         print("Timeline stopped.")
-        action = ArticulationAction(joint_positions=np.array([1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.04, 1.04, 1.0, 1.0, 1.0]))
-        articulation.apply_action(action)
+        # action = ArticulationAction(joint_positions=np.array([1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.04, 1.04, 1.0, 1.0, 1.0]))
+        # articulation.apply_action(action)
 
 
 main_thread = threading.Thread(target=main, daemon=True)
