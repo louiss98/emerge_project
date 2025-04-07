@@ -240,22 +240,46 @@ def initialize_articulation_callback(event):
     
     
     # Define angles (in radians)
-    hip_angle      = 0 * np.pi / 180         # approx 0.0873 rad
-    thigh_angle    = 10 * np.pi / 180       # approx -0.87266 rad
-    calf_angle     = 20 * np.pi / 180       # approx 1.74533 rad
+    # hip_angle      = 0 * np.pi / 180         # approx 0.0873 rad
+    # thigh_angle    = 10 * np.pi / 180       # approx -0.87266 rad
+    # calf_angle     = 20 * np.pi / 180       # approx 1.74533 rad
 
-    # Assuming the joint order is:
-    # [FL_hip, FR_hip, RL_hip, RR_hip,
-    #  FL_thigh, FL_calf, FR_thigh, FR_calf,
-    #  RL_thigh, RL_calf, RR_thigh, RR_calf]
-    action = ArticulationAction(
-        joint_positions = np.array([
-            hip_angle,  hip_angle,  hip_angle,  hip_angle,
-            thigh_angle, thigh_angle, thigh_angle, thigh_angle,
-            calf_angle, calf_angle, calf_angle, calf_angle,
-        ])
-    )
-    articulation.apply_action(action)
+    # # Assuming the joint order is:
+    # # [FL_hip, FR_hip, RL_hip, RR_hip,
+    # #  FL_thigh, FL_calf, FR_thigh, FR_calf,
+    # #  RL_thigh, RL_calf, RR_thigh, RR_calf]
+    # action = ArticulationAction(
+    #     joint_positions = np.array([
+    #         hip_angle,  hip_angle,  hip_angle,  hip_angle,
+    #         thigh_angle, thigh_angle, thigh_angle, thigh_angle,
+    #         calf_angle, calf_angle, calf_angle, calf_angle,
+    #     ])
+    # )
+
+    # Assuming 'articulation' is your Articulation object
+    joint_names = joints
+    joint_positions = articulation.get_joint_positions()
+
+
+    # Define the target position for the front left leg joint
+    target_position = -52  # Example value in radians
+    joint_index = joint_names.index('FL_thigh_joint')
+
+    # Gradually move towards the target position
+    print(f"Starting to move joint '{joint_names[joint_index]}' towards target position: {target_position}")
+    while abs(joint_positions[joint_index] - target_position) > 0.01:
+        print(f"Current position: {joint_positions[joint_index]}, Target position: {target_position}")
+        joint_positions[joint_index] += np.sign(target_position - joint_positions[joint_index]) * 0.01
+        print(f"Updated position: {joint_positions[joint_index]}")
+        action = ArticulationAction(joint_positions=joint_positions)
+        try:
+            articulation.apply_action(action)
+            print(f"Applied action to move joint '{joint_names[joint_index]}'")
+        except Exception as e:
+            print(f"Error applying action: {e}")
+        time.sleep(0.01)  # Adjust the sleep duration as needed
+    print(f"Joint '{joint_names[joint_index]}' reached target position: {target_position}")
+
     timeline.play()
 
 
