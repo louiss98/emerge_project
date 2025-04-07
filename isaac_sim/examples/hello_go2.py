@@ -266,20 +266,26 @@ def initialize_articulation_callback(event):
     joint_index = joint_names.index('FL_thigh_joint')
 
     # Gradually move towards the target position
-    print(f"Starting to move joint '{joint_names[joint_index]}' towards target position: {target_position}")
-    while abs(joint_positions[joint_index] - target_position) > 0.01:
-        print(f"Current position: {joint_positions[joint_index]}, Target position: {target_position}")
-        joint_positions[joint_index] += np.sign(target_position - joint_positions[joint_index]) * 0.01
-        print(f"Updated position: {joint_positions[joint_index]}")
-        action = ArticulationAction(joint_positions=joint_positions)
-        try:
-            articulation.apply_action(action)
-            print(f"Applied action to move joint '{joint_names[joint_index]}'")
-        except Exception as e:
-            print(f"Error applying action: {e}")
-        time.sleep(0.01)  # Adjust the sleep duration as needed
-    print(f"Joint '{joint_names[joint_index]}' reached target position: {target_position}")
 
+
+    # print(f"Starting to move joint '{joint_names[joint_index]}' towards target position: {target_position}")
+    # start_time = time.time()
+    # while abs(joint_positions[joint_index] - target_position) > 0.01:
+    #     if time.time() - start_time > 5:
+    #         print(f"Stopping attempt to move joint '{joint_names[joint_index]}' after 5 seconds")
+    #         break
+    #     print(f"Current position: {joint_positions[joint_index]}, Target position: {target_position}")
+    #     joint_positions[joint_index] += np.sign(target_position - joint_positions[joint_index]) * 0.01
+    #     print(f"Updated position: {joint_positions[joint_index]}")
+    #     action = ArticulationAction(joint_positions=joint_positions)
+    #     try:
+    #         articulation.apply_action(action)
+    #         print(f"Applied action to move joint '{joint_names[joint_index]}'")
+    #     except Exception as e:
+    #         print(f"Error applying action: {e}")
+    #     time.sleep(0.01)  # Adjust the sleep duration as needed
+    # print(f"Joint '{joint_names[joint_index]}' reached target position: {target_position}")
+    # test
     timeline.play()
 
 
@@ -403,7 +409,7 @@ simulation_context = SimulationContext()
 async def task():
     await simulation_context.initialize_simulation_context_async()
     print("Simulation context initialized.")
-    # simulation_context.add_physics_callback("callback_physics", combined_callback)
+    simulation_context.add_physics_callback("callback_physics", combined_callback)
     # simulation_context.set_physics_dt(1.0/10.0, 1)
     # simulation_context.get_physics_dt()
 
