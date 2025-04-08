@@ -357,49 +357,35 @@ publish_queue = queue.Queue()
 publish_counter = 0
 n_publish_frequency = 30
 
-def combined_callback(step_size):
-    global publish_counter
-    publish_counter += 1
-
-    # Only enqueue data for publishing every 'n_publish_frequency' callbacks.
-    if publish_counter % n_publish_frequency == 0:
-        data_for_publish = {
-            "step_size": step_size,
-            # You can include other data as needed.
-        }
-        publish_queue.put(data_for_publish)
-        print(f"Collected data from physics step -> step_size: {step_size} (every {n_publish_frequency} calls)")
-        dc = _dynamic_control.acquire_dynamic_control_interface()
-        articulation = dc.get_articulation(robot_prim_path)
-        # Call this each frame of simulation step if the state of the articulation is changing.
-        dc.wake_up_articulation(articulation)
-        joint_angles = [np.random.rand(9) * 2 - 1]
-        dc.set_articulation_dof_position_targets(articulation, joint_angles)
 
 
-def publish_worker():
-    while not stop_event.is_set():
-        try:
-            # Wait until physics step data is available with a timeout
-            data = publish_queue.get(timeout=0.1)
-        except queue.Empty:
-            continue
 
-        try:
-            # Publish IMU data
-            imu_publisher.publish_imu_data()
-        except Exception as e:
-            print(f"Error publishing IMU data: {e}")
+    
 
-        try:
-            # Publish joint states
-            joint_state_publisher.publish_joint_states()
-        except Exception as e:
-            print(f"Error publishing joint states: {e}")
 
-# Start the publishing worker in a separate thread
-publisher_thread = threading.Thread(target=publish_worker, daemon=True)
-publisher_thread.start()
+# def publish_worker():
+#     while not stop_event.is_set():
+#         try:
+#             # Wait until physics step data is available with a timeout
+#             data = publish_queue.get(timeout=0.1)
+#         except queue.Empty:
+#             continue
+
+#         try:
+#             # Publish IMU data
+#             imu_publisher.publish_imu_data()
+#         except Exception as e:
+#             print(f"Error publishing IMU data: {e}")
+
+#         try:
+#             # Publish joint states
+#             joint_state_publisher.publish_joint_states()
+#         except Exception as e:
+#             print(f"Error publishing joint states: {e}")
+
+# # Start the publishing worker in a separate thread
+# publisher_thread = threading.Thread(target=publish_worker, daemon=True)
+# publisher_thread.start()
 
 
 setup_env()
@@ -432,6 +418,40 @@ timeline_sub = timeline.get_timeline_event_stream().create_subscription_to_pop(
     initialize_articulation_callback, 1
 )
 
+
+
+def combined_callback(step_size):
+    print("physics callback -> step_size:", step_size)
+
+    # try:
+    #     imu_publisher.publish_imu_data()
+    # except Exception as e:
+    #     print(f"Error publishing IMU data: {e}")
+
+    # try:
+    #     joint_state_publisher.publish_joint_states()
+    # except Exception as e:
+    #     print(f"Error publishing joint states: {e}")
+
+    # Select a random joint index
+    joint_index = np.random.randint(len(joints))
+
+    # Get the current joint positions
+    joint_positions = articulation.get_joint_positions()
+
+    # Set a random angle for the selected joint
+    max_angle_increase = np.deg2rad(10)  # Maximum 4 degrees increase
+    random_increase = np.random.uniform(0, max_angle_increase)
+    if np.random.choice([True, False]):
+        joint_positions[joint_index] += random_increase
+    else:
+        joint_positions[joint_index] -= random_increase
+
+    # Create an action containing the updated joint positions
+    action = ArticulationAction(joint_positions=joint_positions)
+
+    # Apply the action to the articulation
+    articulation.apply_action(action)
 
 
 if rclpy.utilities.ok():
