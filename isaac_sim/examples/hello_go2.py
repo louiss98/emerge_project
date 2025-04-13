@@ -6,7 +6,7 @@ import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import JointState, Imu
 import time
-from pxr import Sdf, Gf, UsdGeom
+from pxr import Sdf, Gf, UsdGeom, UsdPhysics
 from isaacsim.core.prims import SingleArticulation as Articulation
 from isaacsim.core.utils.types import ArticulationAction
 import numpy as np
@@ -19,11 +19,114 @@ from omni.kit.async_engine import run_coroutine
 import queue
 import numpy as np
 from omni.isaac.dynamic_control import _dynamic_control
+from concurrent.futures import ThreadPoolExecutor
+from omni.isaac.core import World
+from omni.isaac.core.robots import Robot
+from omni.isaac.core.utils.stage import get_current_stage
+from isaacsim.core.utils.nucleus import get_assets_root_path
+from isaacsim.core.utils.stage import add_reference_to_stage
+from isaacsim.core.api.robots import Robot
+from omni.physx.scripts import utils, physicsUtils
+
+# Get the environment context and stage
+usd_context = omni.usd.get_context()
+stage = usd_context.get_stage()
+timeline = omni.timeline.get_timeline_interface()
 
 
+stop_event = threading.Event()
+physics_ready_event = threading.Event()
+articulation_ready_event = threading.Event()
 
-# Initialize ROS2 only once
+# Define paths
+robot_prim_path = "/World/UnitreeGo2"
+robot_asset_path = (
+    "https://omniverse-content-production.s3-us-west-2.amazonaws.com/Assets/Isaac/4.5/"
+    "Isaac/Robots/Unitree/Go2/go2.usd")
+physics_scene_path = "/World/PhysicsScene" 
+robot_prim_path = "/World/UnitreeGo2"
+robot_imu_prim_path = robot_prim_path + "/imu"
 
+initialization_done = False
+
+# Define the joints. These match the Unitree GO2.
+joints = [
+    "FL_hip_joint",
+    "FR_hip_joint",
+    "RL_hip_joint",
+    "RR_hip_joint",
+    "FL_thigh_joint",
+    "FL_calf_joint",
+    "FR_thigh_joint",
+    "FR_calf_joint",
+    "RL_thigh_joint",
+    "RL_calf_joint",
+    "RR_thigh_joint",
+    "RR_calf_joint"
+]
+
+# Define wave parameters
+frequency = 0.5  # oscillations per second
+amplitude = 0.5  # maximum joint deviation
+# Create or get the world instance. The World object manages physics callbacks.
+
+# Initialize the simulation world
+world = World()
+
+# Get the current stage
+stage = get_current_stage()
+
+def setup_env():
+    if not stage.GetPrimAtPath(physics_scene_path):
+        print("Creating PhysicsScene prim at", physics_scene_path)
+        omni.kit.commands.execute(
+            "CreatePrim",
+            prim_type="PhysicsScene",
+            prim_path=physics_scene_path
+        )
+    else:
+        print("Physics Scene already exists at", physics_scene_path)
+
+    # Spawn the Unitree GO2 if not already present
+    if not stage.GetPrimAtPath(robot_prim_path):
+        print("Spawning Unitree GO2 robot at prim path:", robot_prim_path)
+
+        
+        omni.kit.commands.execute(
+            "CreateReference",
+            usd_context=usd_context,
+            path_to=robot_prim_path,
+            asset_path=robot_asset_path
+        )
+
+        xform = UsdGeom.Xform.Get(stage, Sdf.Path(robot_prim_path))
+        translate = Gf.Vec3d(0, 0, 0.29)
+        physicsUtils.set_or_add_translate_op(xform, translate=translate)
+
+        omni.kit.commands.execute(
+            "ChangeProperty",
+            prop_path=Sdf.Path(f"{robot_prim_path}.physics:enableArticulation"),
+            value=True,
+            prev=None
+        )
+        omni.kit.commands.execute(
+            "AddArticulationRoot",
+            path=robot_prim_path
+        )
+        omni.kit.commands.execute(
+            "ChangeTransform",
+            path=robot_prim_path,
+            value="translateZ:100.6383"  # Adjust the value so the feet touch the ground
+        )
+
+        
+    else:
+        print("Robot is already spawned at prim path:", robot_prim_path)
+        omni.kit.commands.execute(
+            "ChangeTransform",
+            path=robot_prim_path,
+            value="translateZ:100.6383"  # Adjust the value so the feet touch the ground
+        )
 
 class IMUStatePublisher(Node):
     def __init__(self, imu_xform_path):
@@ -92,10 +195,7 @@ class IMUStatePublisher(Node):
         self.publisher_.publish(imu_msg)
         self.get_logger().info("Published IMU data.")
 
-
 class JointStatePublisher(Node):
-    """ROS2 node that publishes joint states."""
-
     def __init__(self, articulation, joint_names):
         node_name = 'joint_state_publisher'
 
@@ -133,91 +233,6 @@ class JointStatePublisher(Node):
         self.publisher_.publish(joint_state_msg)
         self.get_logger().info(f"Published joint states: {joint_state_msg.position}")
 
-
-# Get the environment context and stage
-usd_context = omni.usd.get_context()
-stage = usd_context.get_stage()
-timeline = omni.timeline.get_timeline_interface()
-
-
-stop_event = threading.Event()
-physics_ready_event = threading.Event()
-articulation_ready_event = threading.Event()
-
-# Define paths
-robot_prim_path = "/World/UnitreeGo2"
-robot_asset_path = (
-    "https://omniverse-content-production.s3-us-west-2.amazonaws.com/Assets/Isaac/4.5/"
-    "Isaac/Robots/Unitree/Go2/go2.usd")
-physics_scene_path = "/World/PhysicsScene" 
-robot_prim_path = "/World/UnitreeGo2"
-robot_imu_prim_path = robot_prim_path + "/imu"
-
-initialization_done = False
-
-# Define the joints. These match the Unitree GO2.
-joints = [
-    "FL_hip_joint",
-    "FR_hip_joint",
-    "RL_hip_joint",
-    "RR_hip_joint",
-    "FL_thigh_joint",
-    "FL_calf_joint",
-    "FR_thigh_joint",
-    "FR_calf_joint",
-    "RL_thigh_joint",
-    "RL_calf_joint",
-    "RR_thigh_joint",
-    "RR_calf_joint"
-]
-
-
-# Define wave parameters
-frequency = 0.5  # oscillations per second
-amplitude = 0.5  # maximum joint deviation
-# Create or get the world instance. The World object manages physics callbacks.
-
-
-
-def setup_env():
-    if not stage.GetPrimAtPath(physics_scene_path):
-        print("Creating PhysicsScene prim at", physics_scene_path)
-        omni.kit.commands.execute(
-            "CreatePrim",
-            prim_type="PhysicsScene",
-            prim_path=physics_scene_path
-        )
-    else:
-        print("PhysicsScene already exists at", physics_scene_path)
-
-    # Spawn the Unitree GO2 if not already present
-    if not stage.GetPrimAtPath(robot_prim_path):
-        print("Spawning Unitree GO2 robot at prim path:", robot_prim_path)
-        omni.kit.commands.execute(
-            "CreateReference",
-            usd_context=usd_context,
-            path_to=robot_prim_path,
-            asset_path=robot_asset_path
-        )
-        omni.kit.commands.execute(
-            "ChangeProperty",
-            prop_path=Sdf.Path(f"{robot_prim_path}.physics:enableArticulation"),
-            value=True,
-            prev=None
-        )
-        omni.kit.commands.execute(
-            "AddArticulationRoot",
-            path=robot_prim_path
-        )
-        omni.kit.commands.execute(
-            "ChangeTransform",
-            path=robot_prim_path,
-            value="translateZ:0.6383"  # Adjust the value so the feet touch the ground
-        )
-    else:
-        print("Robot is already spawned at prim path:", robot_prim_path)
-
-
 def initialize_articulation_callback(event):
     global initialization_done
     if initialization_done:
@@ -239,24 +254,6 @@ def initialize_articulation_callback(event):
         initialization_done = True
         timeline_sub.unsubscribe()
     
-    
-    # Define angles (in radians)
-    # hip_angle      = 0 * np.pi / 180         # approx 0.0873 rad
-    # thigh_angle    = 10 * np.pi / 180       # approx -0.87266 rad
-    # calf_angle     = 20 * np.pi / 180       # approx 1.74533 rad
-
-    # # Assuming the joint order is:
-    # # [FL_hip, FR_hip, RL_hip, RR_hip,
-    # #  FL_thigh, FL_calf, FR_thigh, FR_calf,
-    # #  RL_thigh, RL_calf, RR_thigh, RR_calf]
-    # action = ArticulationAction(
-    #     joint_positions = np.array([
-    #         hip_angle,  hip_angle,  hip_angle,  hip_angle,
-    #         thigh_angle, thigh_angle, thigh_angle, thigh_angle,
-    #         calf_angle, calf_angle, calf_angle, calf_angle,
-    #     ])
-    # )
-
     # Assuming 'articulation' is your Articulation object
     joint_names = joints
     joint_positions = articulation.get_joint_positions()
@@ -266,27 +263,6 @@ def initialize_articulation_callback(event):
     target_position = -52  # Example value in radians
     joint_index = joint_names.index('FL_thigh_joint')
 
-    # Gradually move towards the target position
-
-
-    # print(f"Starting to move joint '{joint_names[joint_index]}' towards target position: {target_position}")
-    # start_time = time.time()
-    # while abs(joint_positions[joint_index] - target_position) > 0.01:
-    #     if time.time() - start_time > 5:
-    #         print(f"Stopping attempt to move joint '{joint_names[joint_index]}' after 5 seconds")
-    #         break
-    #     print(f"Current position: {joint_positions[joint_index]}, Target position: {target_position}")
-    #     joint_positions[joint_index] += np.sign(target_position - joint_positions[joint_index]) * 0.01
-    #     print(f"Updated position: {joint_positions[joint_index]}")
-    #     action = ArticulationAction(joint_positions=joint_positions)
-    #     try:
-    #         articulation.apply_action(action)
-    #         print(f"Applied action to move joint '{joint_names[joint_index]}'")
-    #     except Exception as e:
-    #         print(f"Error applying action: {e}")
-    #     time.sleep(0.01)  # Adjust the sleep duration as needed
-    # print(f"Joint '{joint_names[joint_index]}' reached target position: {target_position}")
-    # test
     timeline.play()
 
 
@@ -294,7 +270,6 @@ def initialize_ros_nodes(imu_xform_path, articulation, joint_names):
     imu_publisher = IMUStatePublisher(imu_xform_path)
     joint_state_publisher = JointStatePublisher(articulation, joint_names)
     return imu_publisher, joint_state_publisher
-
 
 def joint_wave_callback(step_size):
     # Read the current simulation time from the world's timeline.
@@ -317,22 +292,6 @@ def joint_wave_callback(step_size):
         articulation.apply_action(action)
     except Exception as e:
         print("Error applying joint action:", e)
-
-
-
-# def combined_callback(step_size):
-#     print("physics callback -> step_size:", step_size)
-
-#     try:
-#         imu_publisher.publish_imu_data()
-#     except Exception as e:
-#         print(f"Error publishing IMU data: {e}")
-
-#     try:
-#         joint_state_publisher.publish_joint_states()
-#     except Exception as e:
-#         print(f"Error publishing joint states: {e}")
-
 
 # from concurrent.futures import ThreadPoolExecutor
 
@@ -402,7 +361,7 @@ simulation_context = SimulationContext()
 async def task():
     await simulation_context.initialize_simulation_context_async()
     print("Simulation context initialized.")
-    simulation_context.add_physics_callback("callback_physics", combined_callback)
+    simulation_context.add_physics_callback("callback_physics", wave_callback)
     # simulation_context.set_physics_dt(1.0/10.0, 1)
     # simulation_context.get_physics_dt()
 
@@ -418,34 +377,46 @@ timeline_sub = timeline.get_timeline_event_stream().create_subscription_to_pop(
     initialize_articulation_callback, 1
 )
 
+# Create a thread pool with a fixed number of worker threads.
+publish_executor = ThreadPoolExecutor(max_workers=4)
+publish_counter = 0
+
+def ros2_callback(step_size):
+    global publish_counter
+    publish_counter += 1
+
+    # Only submit tasks every 10th callback (adjust as needed)
+    if publish_counter % 10 == 0:
+        print("Physics callback -> step_size:", step_size)
+        try:
+            publish_executor.submit(imu_publisher.publish_imu_data)
+        except Exception as e:
+            print(f"Error submitting IMU data publishing task: {e}")
+        try:
+            publish_executor.submit(joint_state_publisher.publish_joint_states)
+        except Exception as e:
+            print(f"Error submitting joint states publishing task: {e}")
 
 
-def combined_callback(step_size):
-    print("physics callback -> step_size:", step_size)
-
-    # try:
-    #     imu_publisher.publish_imu_data()
-    # except Exception as e:
-    #     print(f"Error publishing IMU data: {e}")
-
-    # try:
-    #     joint_state_publisher.publish_joint_states()
-    # except Exception as e:
-    #     print(f"Error publishing joint states: {e}")
+def wave_callback(step_size):
+    
 
     # Select a random joint index
-    joint_index = np.random.randint(len(joints))
+    joint_index = 9 # np.random.randint(len(joints))
 
     # Get the current joint positions
     joint_positions = articulation.get_joint_positions()
 
-    # Set a random angle for the selected joint
-    max_angle_increase = np.deg2rad(10)  # Maximum 4 degrees increase
-    random_increase = np.random.uniform(0, max_angle_increase)
-    if np.random.choice([True, False]):
-        joint_positions[joint_index] += random_increase
-    else:
-        joint_positions[joint_index] -= random_increase
+    if joint_positions is None:
+        return
+
+    print(f"Number of joint positions: {len(joint_positions)}")
+
+    # Oscillate the joint position using a sine wave
+    oscillation_amplitude = np.deg2rad(180)  # Convert 180 degrees to radians
+    oscillation_frequency = 0.5  # Oscillations per second
+    current_time = timeline.get_current_time()
+    joint_positions[joint_index] = oscillation_amplitude * math.sin(2 * math.pi * oscillation_frequency * current_time)
 
     # Create an action containing the updated joint positions
     action = ArticulationAction(joint_positions=joint_positions)
@@ -467,19 +438,6 @@ imu_publisher, joint_state_publisher = initialize_ros_nodes(
 executor = rclpy.executors.MultiThreadedExecutor()
 executor.add_node(imu_publisher)
 executor.add_node(joint_state_publisher)
-
-
-
-
-# async def run_simulation():
-#     await asyncio.sleep(1.0)
-#     world.initialize_physics()
-#     print("Simulation started.")
-#     simulation_context.add_physics_callback("callback_physics", combined_callback)
-
-
-# run_coroutine(run_simulation())
-
 
 def main():
     # Initialize ROS2 and create publisher node
@@ -523,6 +481,27 @@ def main():
         print("Timeline stopped.")
         # action = ArticulationAction(joint_positions=np.array([1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.04, 1.04, 1.0, 1.0, 1.0]))
         # articulation.apply_action(action)
+
+
+def set_joint_damping(joint_name, damping_value):
+    # Construct the full prim path for the joint.
+    joint_prim_path = f"{robot_prim_path}/{joint_name}"
+    joint_prim = stage.GetPrimAtPath(joint_prim_path)
+    if not joint_prim.IsValid():
+        print(f"Joint prim not found: {joint_prim_path}")
+        return
+
+    # Apply a DriveAPI (for example, linear drive) to the joint prim
+    driveAPI = UsdPhysics.DriveAPI.Apply(joint_prim, "linearDrive")
+    driveAPI.CreateDampingAttr(damping_value)
+    print(f"Set damping for {joint_name} to {damping_value}")
+
+def set_all_joints_damping(damping_value):
+    for joint in joints:
+        set_joint_damping(joint, damping_value)
+
+# Usage: set all joints to have a damping of 1000.0
+set_all_joints_damping(1000.0)
 
 
 main_thread = threading.Thread(target=main, daemon=True)
